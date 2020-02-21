@@ -4,6 +4,7 @@ import time
 import argparse
 import torch
 import numpy as np
+import csv
 
 from detector import build_detector
 from deep_sort import build_tracker
@@ -15,9 +16,10 @@ class VideoTracker(object):
     def __init__(self, cfg, args):
         self.cfg = cfg
         self.args = args
-        use_cuda = args.use_cuda and torch.cuda.is_available()
-        if not use_cuda:
-            raise UserWarning("Running in cpu mode!")
+        use_cuda = False
+        #use_cuda = args.use_cuda and torch.cuda.is_available()
+        #if not use_cuda:
+        #    raise UserWarning("Running in cpu mode!")
 
         if args.display:
             cv2.namedWindow("test", cv2.WINDOW_NORMAL)
@@ -46,48 +48,95 @@ class VideoTracker(object):
     def __exit__(self, exc_type, exc_value, exc_traceback):
         if exc_type:
             print(exc_type, exc_value, exc_traceback)
+
+    def posprocessing(self, writer, idx_frame, im, outputs):
+        face_cascade = cv2.CascadeClassifier('demo/haarcascade_frontalface_default.xml')
+
+        for row in outputs:
+            x = row[0]
+            y = row[1]
+            w = row[2]
+            h = row[3]
+            identity = row[4]
+            video_name = self.args.VIDEO_PATH.split(".")[0]
+
+            crop_image = im[int(y):int(h), int(x):int(w)]
+
+            gray = cv2.cvtColor(crop_image, cv2.COLOR_BGR2GRAY)
+
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+            face = None
+            for (i, j, k, l) in faces:
+                face = crop_image[int(j):int(j + l), int(i):int(i + k)]
+
+                try:
+                    path = os.getcwd()
+                    print(path + "/results/{}/{}".format(video_name, identity))
+                    os.mkdir(path + "/results/{}/{}".format(video_name, identity))
+                except:
+                    print("Aviso: Já existe o diretório!")
+                    
+                if(face.any()): 
+                    cv2.imwrite("results/{}/{}/{}.jpg".format(video_name, identity, idx_frame), face)
+
+    
+            writer.writerow({'x': x, 'y': y, 'w': w, 'h': h, 'frame': idx_frame, 'code': identity})
         
 
     def run(self):
         idx_frame = 0
-        while self.vdo.grab(): 
-            idx_frame += 1
-            if idx_frame % self.args.frame_interval:
-                continue
+        
+        path = os.getcwd()
+        os.mkdir(path + "/results/{}".format(self.args.VIDEO_PATH.split(".")[0]))
 
-            start = time.time()
-            _, ori_im = self.vdo.retrieve()
-            im = cv2.cvtColor(ori_im, cv2.COLOR_BGR2RGB)
+        with open(path + '/results/{}/annotations.csv'.format(self.args.VIDEO_PATH.split(".")[0]), 'w', newline='') as csvfile:
+            fieldnames = ['x', 'y', 'w', 'h', 'frame', 'code']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
 
-            # do detection
-            bbox_xywh, cls_conf, cls_ids = self.detector(im)
-            if bbox_xywh is not None:
-                # select person class
-                mask = cls_ids==0
+            while self.vdo.grab(): 
+                idx_frame += 1
+                if idx_frame % self.args.frame_interval:
+                    continue
 
-                bbox_xywh = bbox_xywh[mask]
-                bbox_xywh[:,3:] *= 1.2 # bbox dilation just in case bbox too small
-                cls_conf = cls_conf[mask]
+                start = time.time()
+                _, ori_im = self.vdo.retrieve()
+                im = cv2.cvtColor(ori_im, cv2.COLOR_BGR2RGB)
 
-                # do tracking
-                outputs = self.deepsort.update(bbox_xywh, cls_conf, im)
+                # do detection
+                bbox_xywh, cls_conf, cls_ids = self.detector(im)
+                if bbox_xywh is not None:
+                    # select person class
+                    mask = cls_ids==0
 
-                # draw boxes for visualization
-                if len(outputs) > 0:
-                    bbox_xyxy = outputs[:,:4]
-                    identities = outputs[:,-1]
-                    ori_im = draw_boxes(ori_im, bbox_xyxy, identities)
+                    bbox_xywh = bbox_xywh[mask]
+                    bbox_xywh[:,3:] *= 1.2 # bbox dilation just in case bbox too small
+                    cls_conf = cls_conf[mask]
 
-            end = time.time()
-            print("time: {:.03f}s, fps: {:.03f}".format(end-start, 1/(end-start)))
+                    # do tracking
+                    outputs = self.deepsort.update(bbox_xywh, cls_conf, im)
 
-            if self.args.display:
-                cv2.imshow("test", ori_im)
-                cv2.waitKey(1)
+                    self.posprocessing(writer, idx_frame, ori_im, outputs)
 
-            if self.args.save_path:
-                self.writer.write(ori_im)
-            
+                    # draw boxes for visualization
+                    if len(outputs) > 0:
+                        bbox_xyxy = outputs[:,:4]
+                        identities = outputs[:,-1]
+
+                        ori_im = draw_boxes(ori_im, bbox_xyxy, identities)
+
+                end = time.time()
+
+                print("time: {:.03f}s, fps: {:.03f}".format(end-start, 1/(end-start)))
+
+                if self.args.display:
+                    cv2.imshow("test", ori_im)
+                    cv2.waitKey(1)
+
+                if self.args.save_path:
+                    self.writer.write(ori_im)
+                    
 
 def parse_args():
     parser = argparse.ArgumentParser()
