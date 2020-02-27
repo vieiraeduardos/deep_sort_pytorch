@@ -49,7 +49,7 @@ class VideoTracker(object):
         if exc_type:
             print(exc_type, exc_value, exc_traceback)
 
-    def posprocessing(self, writer, idx_frame, im, outputs):
+    def posprocessing(self, writer, idx_frame, im, outputs, start):
         face_cascade = cv2.CascadeClassifier('demo/haarcascade_frontalface_default.xml')
 
         for row in outputs:
@@ -75,12 +75,12 @@ class VideoTracker(object):
                     print(path + "/results/{}/{}".format(video_name, identity))
                     os.mkdir(path + "/results/{}/{}".format(video_name, identity))
                 except:
-                    print("Aviso: Já existe o diretório!")
+                    print("")
                     
-                if(face.any()): 
+                if(face.any()):
                     cv2.imwrite("results/{}/{}/{}.jpg".format(video_name, identity, idx_frame), face)
 
-    
+            print(start%60)
             writer.writerow({'x': x, 'y': y, 'w': w, 'h': h, 'frame': idx_frame, 'code': identity})
         
 
@@ -117,7 +117,11 @@ class VideoTracker(object):
                     # do tracking
                     outputs = self.deepsort.update(bbox_xywh, cls_conf, im)
 
-                    self.posprocessing(writer, idx_frame, ori_im, outputs)
+                    fps = self.vdo.get(cv2.CAP_PROP_FPS)      # OpenCV2 version 2 used "CV_CAP_PROP_FPS"
+                    frame_count = int(self.vdo.get(cv2.CAP_PROP_FRAME_COUNT))
+                    duration = frame_count/fps
+
+                    self.posprocessing(writer, idx_frame, ori_im, outputs, duration)
 
                     # draw boxes for visualization
                     if len(outputs) > 0:
@@ -128,7 +132,7 @@ class VideoTracker(object):
 
                 end = time.time()
 
-                print("time: {:.03f}s, fps: {:.03f}".format(end-start, 1/(end-start)))
+                #print("time: {:.03f}s, fps: {:.03f}".format(end-start, 1/(end-start)))
 
                 if self.args.display:
                     cv2.imshow("test", ori_im)
